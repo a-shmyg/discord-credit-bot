@@ -1,0 +1,21 @@
+services:
+  postgres_db:
+    container_name: postgres_db
+    image: postgres:13
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=test
+      - POSTGRES_DB=discord_writing_bot
+
+    healthcheck:
+      test: ["CMD-SHELL", "sh -c 'pg_isready -U postgres -d 'discord_writing_bot'"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  postgres_data:
