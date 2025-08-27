@@ -99,7 +99,7 @@ async def on_raw_reaction_add(payload):
                 story_title = google_doc_embed.title
 
                 # This relies on someone putting wordcount into very specific format in the title, but whatevs
-                story_words = re.findall(r'\[(.*?)\]', google_doc_embed.title)
+                story_words = re.findall(r"\[(.*?)\]", google_doc_embed.title)
 
             else:
                 print("No embed for Google Doc so using fallback for title")
