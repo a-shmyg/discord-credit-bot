@@ -124,8 +124,6 @@ async def on_raw_reaction_add(payload):
 
             # Fragile as hell, if someone puts a non-number between the brackets like [Lol] in the title, this will break
             if len(story_words) > 0:
-                print("Estimating wordcount from title...")
-
                 current_user_words_read = user_credit_state[user_who_reacted.name][
                     "total_words_read"
                 ]
@@ -134,8 +132,9 @@ async def on_raw_reaction_add(payload):
                 )
 
             await channel.send(
-                f"{user_who_reacted} has read {story_title} and gets a feedback credit!"
+                f"{user_who_reacted.mention} has read **{story_title}** by {message.author.nick} and gets a feedback credit :coin:!"
             )
+
             return
 
 
@@ -170,10 +169,12 @@ async def stats(interaction):
         ):
             submitted_stories = submitted_stories + 1
 
+    total_credits = user_credit_state[user_name]["feedback_credits"]
     stories_read = user_credit_state[user_name]["total_stories_read"]
     words_read = user_credit_state[user_name]["total_words_read"]
 
     format_message = f""" {interaction.user.mention} server stats:
+        Total credits: {total_credits}
         Total stories read: {stories_read}
         Total stories submitted: {submitted_stories} 
         Total words read (that we know of!): {words_read}
