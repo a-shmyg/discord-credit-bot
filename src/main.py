@@ -1,13 +1,17 @@
 import os
 
 import discord
+from discord import app_commands
 from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-GUILD = int(os.getenv("DISCORD_GUILD_ID"))
+GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
 CHANNEL = int(os.getenv("DISCORD_TEST_CHANNEL_ID"))
 CREDIT_REACT = "✅"
+
+# Following the slash command example here - https://github.com/Rapptz/discord.py/blob/master/examples/app_commands/basic.py
+GUILD = discord.Object(GUILD_ID)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -16,16 +20,22 @@ intents.members = True
 
 client = discord.Client(intents=intents)
 
+# Slash commands
+tree = app_commands.CommandTree(client)
+tree.copy_global_to(guild=GUILD)
+
 @client.event
 async def on_ready():
-    guild = client.get_guild(GUILD)
+    guild = client.get_guild(GUILD_ID)
     channel = client.get_channel(CHANNEL)
+
+    await tree.sync(guild=GUILD)
 
     print(f'We have logged in as {client.user} to {guild}')
 
 @client.event
 async def on_raw_reaction_add(payload):
-    guild = client.get_guild(GUILD)
+    guild = client.get_guild(GUILD_ID)
     channel = client.get_channel(CHANNEL)
     channel_of_react = payload.channel_id
 
@@ -58,12 +68,20 @@ async def on_raw_reaction_add(payload):
                 # Hell of an assumption, but fine for now - MVP etc etc
                 google_doc_embed = message.embeds[0]
                 story_title = google_doc_embed.title
-                
+
             else:
-                print("No embed for google doc so using fallback for title")
+                print("No embed for Google Doc so using fallback for title")
 
 
             await channel.send(f"{user_who_reacted} has read {story_title} and gets a feedback credit!")
             return
+
+@tree.command(
+    name="credits",
+    description="Get number of feedback credits",
+    guild=GUILD
+)
+async def credits(interaction):
+    await interaction.response.send_message("user X had Y number of feedback or whatever IDFK")
 
 client.run(TOKEN)
