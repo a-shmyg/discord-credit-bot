@@ -8,7 +8,7 @@ from sqlalchemy import Column, Date, Integer, String, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-from dao.models import Base, User
+from dao.models import Base, User, Story
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -64,15 +64,14 @@ async def on_ready():
     channel = client.get_channel(CHANNEL)
 
     # TODO - take the DB parts out of the main logic
-    print("Initialising user info...")
     s = Session()
 
     # Basically, on startup if a user doesn't exist, we need to create them. Otherwise, we already have their info stored in DB
+    print("Initialising user info...")
     for member in guild.members:
         member_username = str(member.name)
         print(f"Init for: {member_username}")
 
-        print("Checking if user exists already...")
         result = s.query(User).filter_by(username=member_username).first()
 
         if not result:
@@ -91,6 +90,28 @@ async def on_ready():
         else:
             print("User exists in DB, skipping")
 
+    # Do the same for posted stories. TODO - move this out of main logic. Also, if channel is large the startup will take a lot of time. Better make seperate function for this
+    print("Initialising submitted story info...")
+    google_doc_url = "https://docs.google.com" # REALLY need to move this check out into a function or something
+    channel_messages = channel.history()
+
+    async for message in channel_messages:
+        if message.content.startswith(google_doc_url):
+            result = s.query(Story).filter_by(story_message=str(message.content)).first()
+
+            # Only add if story doesn't exist in DB already
+            if not result:
+                print("Story link/message doesn't exist in DB, adding...")
+
+                story = Story(
+                    author_username=str(message.author),
+                    story_message=str(message.content),
+                    date_posted=str(message.created_at),
+                )
+                s.add(story)
+                s.commit()
+            else:
+                print("Story exists in DB, skipping")
     s.close()
 
     # Sync up the slash commands
@@ -110,14 +131,23 @@ async def on_message(message):
 
     # Super basic check, for now assuming if person posts a doc link in the channel, they're posting a story
     google_doc_url = "https://docs.google.com"
-    if message.content.startswith(google_doc_url):
+    if message.content.startswith(google_doc_url): #TODO - change to contains... if someone posts message AND adds a link, this won't work
         print(f"{message.author} posted a new story")
 
         s = Session()
-        s.query(User).filter_by(username=str(message.author)).update(
-            {"submitted_stories_total": User.submitted_stories_total + 1}
-        )
-        s.commit()
+
+        # Only add if story doesn't exist in DB already
+        result = s.query(Story).filter_by(story_message=str(message.content)).first()
+        if not result:
+            print("Story link/message doesn't exist in DB, adding...")
+            story = Story(
+                author_username=str(message.author),
+                story_message=str(message.content),
+                date_posted=str(message.created_at),
+            )
+            s.add(story)
+            s.commit()
+
         s.close()
 
 
@@ -224,41 +254,15 @@ async def stats(interaction):
     username = str(interaction.user)
 
     s = Session()
-    user_result = s.query(User).filter_by(username=str(interaction.user)).first()
-    submitted_stories = user_result.submitted_stories_total
-
-    # For now, let's assume if submitted_stories_total is 0 either user is new and just joined, or the DB data has been cleared.
-    # So let's count them manually. If it's more than 0, then no need - we know (and we'll add a method to update this value when someone posts a doc link)
-    if submitted_stories == 0:
-        print(
-            f"0 submitted stories in DB - checking how many submitted by {username}..."
-        )
-        channel_messages = channel.history()
-
-        async for message in channel_messages:
-            google_doc_url = "https://docs.google.com"
-
-            if str(message.author) == username and message.content.startswith(
-                google_doc_url
-            ):
-                submitted_stories = submitted_stories + 1
-
-        # Update DB with new value
-        s.query(User).filter_by(username=str(interaction.user)).update(
-            {"submitted_stories_total": submitted_stories}
-        )
-        s.commit()
-
-    else:
-        print("Using value from DB for stats")
-
+    user_submitted_stories = s.query(Story).filter_by(author_username=username).count()
+    user_stats = s.query(User).filter_by(username=str(interaction.user)).first()
     s.close()
 
     format_message = f""" {interaction.user.mention} server stats:
-        Total credits: {user_result.feedback_credits}
-        Total stories read: {user_result.read_stories_total}
-        Total stories submitted: {submitted_stories} 
-        Total words read (that we know of!): {user_result.wordcount_read_total}
+        Total credits: {user_stats.feedback_credits}
+        Total stories read: {user_stats.read_stories_total}
+        Total stories submitted: {str(user_submitted_stories)} 
+        Total words read (that we know of!): {user_stats.wordcount_read_total}
     """
 
     await interaction.response.send_message(format_message)
