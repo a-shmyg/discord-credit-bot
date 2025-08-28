@@ -29,6 +29,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.reactions = True
 intents.members = True
+intents.messages = True
 
 client = discord.Client(intents=intents)
 
@@ -96,6 +97,28 @@ async def on_ready():
     await tree.sync(guild=GUILD)
 
     print(f"We have logged in as {client.user} to {guild}")
+
+@client.event
+async def on_message(message):
+    guild = client.get_guild(GUILD_ID)
+    channel = client.get_channel(CHANNEL)
+    channel_of_message = message.channel
+
+    # Limiting this event to only single channel - ignore messages from elsewhere for now. Probs nicer way to do this, one to look into
+    if channel_of_message != channel:
+        return
+
+    # Super basic check, for now assuming if person posts a doc link in the channel, they're posting a story
+    google_doc_url = "https://docs.google.com"
+    if message.content.startswith(google_doc_url):
+        print(f"{message.author} posted a new story")
+
+        s = Session()
+        s.query(User).filter_by(username=str(message.author)).update(
+            {"submitted_stories_total": User.submitted_stories_total + 1}
+        )
+        s.commit()
+        s.close()
 
 
 @client.event
