@@ -4,17 +4,19 @@ import re
 import discord
 from discord import app_commands
 from dotenv import load_dotenv
-from sqlalchemy import Column, Date, Integer, String, create_engine
+from sqlalchemy import (Column, Date, Integer, String, and_, create_engine,
+                        exists)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-from dao.models import Base, User, Story
+from dao.models import Base, Story, User, WhoReadWhat
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
 CHANNEL = int(os.getenv("DISCORD_TEST_CHANNEL_ID"))
 CREDIT_REACT = "✅"
+GOOGLE_DOC_URL = "https://docs.google.com"
 
 # TODO - organise the code so it's not all in one massive file
 DB_USER = os.getenv("POSTGRES_USER")
@@ -80,7 +82,6 @@ async def on_ready():
             user = User(
                 username=member_username,
                 feedback_credits=0,
-                submitted_stories_total=0,
                 read_stories_total=0,
                 wordcount_read_total=0,
             )
@@ -92,15 +93,20 @@ async def on_ready():
 
     # Do the same for posted stories. TODO - move this out of main logic. Also, if channel is large the startup will take a lot of time. Better make seperate function for this
     print("Initialising submitted story info...")
-    google_doc_url = "https://docs.google.com" # REALLY need to move this check out into a function or something
+    google_doc_url = "https://docs.google.com"  # REALLY need to move this check out into a function or something
     channel_messages = channel.history()
 
     async for message in channel_messages:
         if message.content.startswith(google_doc_url):
-            result = s.query(Story).filter_by(story_message=str(message.content)).first()
+            # Add unique stories to the DB if they're not in there already. Like said above, we need to move this out of the startup logic
+
+            # TODO - on conflict do nothing. Try to insert anyway, if it exists then whatevs. otherwise we're doing SELECT twice.
+            story_result = (
+                s.query(Story).filter_by(story_message=str(message.content)).first()
+            )
 
             # Only add if story doesn't exist in DB already
-            if not result:
+            if not story_result:
                 print("Story link/message doesn't exist in DB, adding...")
 
                 story = Story(
@@ -112,12 +118,50 @@ async def on_ready():
                 s.commit()
             else:
                 print("Story exists in DB, skipping")
+
+            # This bit is the junction table - for now it's at startup (so checks previous reacts) but TODO to move it out of here after testing
+            print("Checking who read what...")
+            reactions = message.reactions
+
+            # Super jank, I'm sure there's a nicer way - need more reading about async stuff.
+            # Doing it twice for now but I don't think we need to query again. Ceases to be an issue once we move this DB population out of on_ready logic
+            story_result = (
+                s.query(Story).filter_by(story_message=str(message.content)).first()
+            )
+
+            for reaction in reactions:
+                if reaction.emoji == CREDIT_REACT:
+                    async for user in reaction.users():
+                        # Reconstructing who read what based on messages - will move this OUT of on_ready logic once I'm happy with table/querying
+                        who_read_what_result = s.query(
+                            exists().where(
+                                and_(
+                                    WhoReadWhat.username == str(user.name),
+                                    WhoReadWhat.story_id == story_result.id,
+                                )
+                            )
+                        ).scalar()
+
+                        if not who_read_what_result:
+                            # What we're doing here - we need user id of who READ the story AKA author of the REACTION (not the message)
+                            print("Who read what entry doesn't exist in DB, adding...")
+                            who_read_story = WhoReadWhat(
+                                username=str(user.name),
+                                story_id=story_result.id,
+                            )
+
+                            s.add(who_read_story)
+                            s.commit()
+                        else:
+                            print("Who read what already in DB, skipping")
+
     s.close()
 
     # Sync up the slash commands
     await tree.sync(guild=GUILD)
 
     print(f"We have logged in as {client.user} to {guild}")
+
 
 @client.event
 async def on_message(message):
@@ -131,7 +175,9 @@ async def on_message(message):
 
     # Super basic check, for now assuming if person posts a doc link in the channel, they're posting a story
     google_doc_url = "https://docs.google.com"
-    if message.content.startswith(google_doc_url): #TODO - change to contains... if someone posts message AND adds a link, this won't work
+    if message.content.startswith(
+        google_doc_url
+    ):  # TODO - change to contains... if someone posts message AND adds a link, this won't work
         print(f"{message.author} posted a new story")
 
         s = Session()
@@ -150,7 +196,8 @@ async def on_message(message):
 
         s.close()
 
-
+# TODO - check for if someone's already read same story
+# ALSO - check for if someone's trying to get feedback credits from their own story, lol
 @client.event
 async def on_raw_reaction_add(payload):
     guild = client.get_guild(GUILD_ID)
@@ -206,7 +253,37 @@ async def on_raw_reaction_add(payload):
             else:
                 print("No embed for Google Doc so using fallback for title")
 
-            # This might be better in an actual function IMO
+            # This bit tracks who read what - we're just updating in DB whenever somebody does :tick: emoji
+            # TODO move this out of here lol it's a mess RN
+            print("Updating junction table to track who read what...")
+
+            story_result = (
+                s.query(Story).filter_by(story_message=str(message.content)).first()
+            )
+
+            who_read_what_result = s.query(
+                exists().where(
+                    and_(
+                        WhoReadWhat.username == str(user_who_reacted.name),
+                        WhoReadWhat.story_id == story_result.id,
+                    )
+                )
+            ).scalar()
+
+            if not who_read_what_result:
+                # What we're doing here - we need user id of who READ the story AKA author of the REACTION (not the message)
+                print("Who read what entry doesn't exist in DB, adding...")
+                who_read_story = WhoReadWhat(
+                    username=str(user_who_reacted.name),
+                    story_id=story_result.id,
+                )
+
+                s.add(who_read_story)
+                s.commit()
+            else:
+                print("Who read what already in DB, skipping")
+
+            # TODO - move this out into functions in dao folder
             print(f"Updating credits for {user_who_reacted}...")
             s.query(User).filter_by(username=str(user_who_reacted.name)).update(
                 {
