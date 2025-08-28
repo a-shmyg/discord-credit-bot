@@ -1,7 +1,8 @@
+from sqlalchemy import Column, Date, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, Integer, String, Date
 
 Base = declarative_base()
+
 
 class User(Base):
     __tablename__ = "users"
@@ -19,7 +20,5 @@ class User(Base):
             self.feedback_credits,
             self.submitted_stories_total,
             self.read_stories_total,
-            self.wordcount_read_total
+            self.wordcount_read_total,
         )
-
-    

@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 from sqlalchemy import Column, Date, Integer, String, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from dao.models import User, Base
+
+from dao.models import Base, User
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -35,11 +36,13 @@ client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 tree.copy_global_to(guild=GUILD)
 
+
 # DB stuff - TODO to also move this out of here later
 def get_connection():
     return create_engine(
         url=f"postgresql://{DB_USER}:{DB_PASS}@localhost:5432/{DB_NAME}"
     )
+
 
 try:
     print("Connecting to DB via SQLAlchemy")
@@ -156,7 +159,7 @@ async def on_raw_reaction_add(payload):
                 {
                     "feedback_credits": User.feedback_credits + 1,
                     "read_stories_total": User.read_stories_total + 1,
-                    "wordcount_read_total": User.wordcount_read_total + story_wordcount
+                    "wordcount_read_total": User.wordcount_read_total + story_wordcount,
                 }
             )
             s.commit()
@@ -183,7 +186,6 @@ async def credits(interaction):
     user_credits = user_result.feedback_credits
     s.close()
 
-
     await interaction.response.send_message(
         f"{interaction.user.mention} has {user_credits} feedback credits to use :fire:"
     )
@@ -196,21 +198,37 @@ async def stats(interaction):
     print(f"Getting stats for the {interaction.user} who invoked me...")
 
     channel = client.get_channel(CHANNEL)
-    channel_messages = channel.history()
-    user_name = str(interaction.user)
-
-    # More efficient to just update values from a DB than trawling through entire channel history, but keeping it simple for now
-    submitted_stories = 0
-    async for message in channel_messages:
-        google_doc_url = "https://docs.google.com"
-
-        if str(message.author) == user_name and message.content.startswith(
-            google_doc_url
-        ):
-            submitted_stories = submitted_stories + 1
+    username = str(interaction.user)
 
     s = Session()
     user_result = s.query(User).filter_by(username=str(interaction.user)).first()
+    submitted_stories = user_result.submitted_stories_total
+
+    # For now, let's assume if submitted_stories_total is 0 either user is new and just joined, or the DB data has been cleared.
+    # So let's count them manually. If it's more than 0, then no need - we know (and we'll add a method to update this value when someone posts a doc link)
+    if submitted_stories == 0:
+        print(
+            f"0 submitted stories in DB - checking how many submitted by {username}..."
+        )
+        channel_messages = channel.history()
+
+        async for message in channel_messages:
+            google_doc_url = "https://docs.google.com"
+
+            if str(message.author) == username and message.content.startswith(
+                google_doc_url
+            ):
+                submitted_stories = submitted_stories + 1
+
+        # Update DB with new value
+        s.query(User).filter_by(username=str(interaction.user)).update(
+            {"submitted_stories_total": submitted_stories}
+        )
+        s.commit()
+
+    else:
+        print("Using value from DB for stats")
+
     s.close()
 
     format_message = f""" {interaction.user.mention} server stats:
