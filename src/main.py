@@ -4,12 +4,23 @@ import re
 import discord
 from discord import app_commands
 from dotenv import load_dotenv
+from sqlalchemy import Column, Date, Integer, String, create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+# from models import User
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
 CHANNEL = int(os.getenv("DISCORD_TEST_CHANNEL_ID"))
 CREDIT_REACT = "✅"
+
+# TODO - organise the code so it's not all in one massive file
+DB_USER = os.getenv("POSTGRES_USER")
+DB_PASS = os.getenv("POSTGRES_PASSWORD")
+DB_NAME = os.getenv("POSTGRES_DB")
+
 
 # Following the slash command example here - https://github.com/Rapptz/discord.py/blob/master/examples/app_commands/basic.py
 GUILD = discord.Object(GUILD_ID)
@@ -26,8 +37,50 @@ tree = app_commands.CommandTree(client)
 tree.copy_global_to(guild=GUILD)
 
 
-# We'll need to add some kind of DB for state at some point, but for now:
-user_credit_state = {}
+# DB stuff - move out of this file when refactoring
+Base = declarative_base()
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)  # TODO - change to UUID
+    username = Column(String)
+    feedback_credits = Column(Integer)
+    submitted_stories_total = Column(Integer)
+    read_stories_total = Column(Integer)
+    wordcount_read_total = Column(Integer)
+
+    def __repr__(self):
+        return "<User(username='{}', feedback_credits='{}', submitted_stories_total='{}', read_stories_total={}, wordcount_read_total={}>".format(
+            self.username,
+            self.feedback_credits,
+            self.submitted_stories_total,
+            self.read_stories_total,
+            self.wordcount_read_total
+        )
+
+
+def get_connection():
+    return create_engine(
+        url=f"postgresql://{DB_USER}:{DB_PASS}@localhost:5432/{DB_NAME}"
+    )
+
+
+def create_tables():
+    print("Creating tables if they don't exist...")
+
+
+try:
+    print("Connecting to DB via SQLAlchemy")
+    engine = get_connection()
+
+    print("Creating tables")
+    Base.metadata.create_all(engine)
+except Exception as e:
+    print("Something went wrong: ", e)
+
+Session = sessionmaker(bind=engine)
 
 
 # Discord.py stuff
@@ -36,23 +89,40 @@ async def on_ready():
     guild = client.get_guild(GUILD_ID)
     channel = client.get_channel(CHANNEL)
 
-    await tree.sync(guild=GUILD)
+    # TODO - take the DB parts out of the main logic
+    print("Initialising user info...")
+    s = Session()
 
-    # To do this properly we should think about how to model our data, and what relationships each piece of data has with each other
-    # For a quick test though, this is good enough
-    print("Initialising how much credit everybody's got")
+    # Basically, on startup if a user doesn't exist, we need to create them. Otherwise, we already have their info stored in DB
     for member in guild.members:
-        print(f"Init for: {member.name}")
+        member_username = str(member.name)
+        print(f"Init for: {member_username}")
 
-        member_credit_state = {
-            "feedback_credits": 0,
-            "total_stories_read": 0,
-            "total_words_read": 0,
-        }
+        print("Checking if user exists already...")
+        result = s.query(User).filter_by(username=member_username).first()
 
-        # Not recommended usually, but until we get proper state set up it's fine
-        global user_credit_state
-        user_credit_state.update({member.name: member_credit_state})
+        if not result:
+            print("User doesn't exist in DB, creating...")
+
+            # we're missing total wordcount but eh leave it for now
+            user = User(
+                username=member_username,
+                feedback_credits=0,
+                submitted_stories_total=0,
+                read_stories_total=0,
+                wordcount_read_total=0,
+            )
+            s.add(user)
+            s.commit()
+
+        else:
+            print("User exists in DB, skipping")
+
+    result = s.query(User).all()
+    print(str(result))
+    s.close()
+
+    await tree.sync(guild=GUILD)
 
     print(f"We have logged in as {client.user} to {guild}")
 
@@ -62,6 +132,9 @@ async def on_raw_reaction_add(payload):
     guild = client.get_guild(GUILD_ID)
     channel = client.get_channel(CHANNEL)
     channel_of_react = payload.channel_id
+
+    # Session for our DB interactions
+    s = Session()
 
     # Limiting this event to only single channel - ignore reactions from elsewhere for now
     if channel_of_react != CHANNEL:
@@ -79,6 +152,7 @@ async def on_raw_reaction_add(payload):
         # This is a SUPER basic check, probably better ways exist but good enough for now
         google_doc_url = "https://docs.google.com"
         story_title = "an awesome story"
+        story_wordcount = 0
 
         if (
             message.id == message_id
@@ -101,35 +175,28 @@ async def on_raw_reaction_add(payload):
                 # This relies on someone putting wordcount into very specific format in the title, but whatevs
                 story_words = re.findall(r"\[(.*?)\]", google_doc_embed.title)
 
+                # Horrible, don't do this IRL lol
+                if len(story_words) == 1:
+                    story_wordcount = int(story_words[0])
+
             else:
                 print("No embed for Google Doc so using fallback for title")
 
-            # Temporary until we get DB/state set up
+            # This might be better in an actual function IMO
             print(f"Updating credits for {user_who_reacted}...")
-
-            global user_credit_state
-            current_user_credits = user_credit_state[user_who_reacted.name][
-                "feedback_credits"
-            ]
-            user_credit_state[user_who_reacted.name]["feedback_credits"] = (
-                current_user_credits + 1
+            s.query(User).filter_by(username=str(user_who_reacted.name)).update(
+                {
+                    "feedback_credits": User.feedback_credits + 1,
+                    "read_stories_total": User.read_stories_total + 1,
+                    "wordcount_read_total": User.wordcount_read_total + story_wordcount
+                }
             )
-
-            current_user_stories_read = user_credit_state[user_who_reacted.name][
-                "total_stories_read"
-            ]
-            user_credit_state[user_who_reacted.name]["total_stories_read"] = (
-                current_user_stories_read + 1
+            s.commit()
+            user_result = (
+                s.query(User).filter_by(username=str(user_who_reacted.name)).first()
             )
-
-            # Fragile as hell, if someone puts a non-number between the brackets like [Lol] in the title, this will break
-            if len(story_words) > 0:
-                current_user_words_read = user_credit_state[user_who_reacted.name][
-                    "total_words_read"
-                ]
-                user_credit_state[user_who_reacted.name]["total_words_read"] = (
-                    current_user_words_read + int(story_words[0])
-                )
+            s.close()
+            print(user_result)
 
             await channel.send(
                 f"{user_who_reacted.mention} has read **{story_title}** by {message.author.nick} and gets a feedback credit :coin:!"
@@ -142,10 +209,15 @@ async def on_raw_reaction_add(payload):
 @tree.command(name="credits", description="Get number of feedback credits", guild=GUILD)
 async def credits(interaction):
     print(f"Getting credit info for the {interaction.user} who invoked me...")
-    user_credits = user_credit_state[str(interaction.user)]["feedback_credits"]
+
+    s = Session()
+    user_result = s.query(User).filter_by(username=str(interaction.user)).first()
+    user_credits = user_result.feedback_credits
+    s.close()
+
 
     await interaction.response.send_message(
-        f"{interaction.user.mention} has {user_credits} feedback credits to use"
+        f"{interaction.user.mention} has {user_credits} feedback credits to use :fire:"
     )
 
 
@@ -169,18 +241,28 @@ async def stats(interaction):
         ):
             submitted_stories = submitted_stories + 1
 
-    total_credits = user_credit_state[user_name]["feedback_credits"]
-    stories_read = user_credit_state[user_name]["total_stories_read"]
-    words_read = user_credit_state[user_name]["total_words_read"]
+    s = Session()
+    user_result = s.query(User).filter_by(username=str(interaction.user)).first()
+    s.close()
 
     format_message = f""" {interaction.user.mention} server stats:
-        Total credits: {total_credits}
-        Total stories read: {stories_read}
+        Total credits: {user_result.feedback_credits}
+        Total stories read: {user_result.read_stories_total}
         Total stories submitted: {submitted_stories} 
-        Total words read (that we know of!): {words_read}
+        Total words read (that we know of!): {user_result.wordcount_read_total}
     """
 
     await interaction.response.send_message(format_message)
+
+
+# # TODO still because making polls is such a PITA every time
+# @tree.command(
+#     name="session", description="Create poll for new writing session", guild=GUILD
+# )
+# async def credits(interaction):
+#     print(f"Creating poll for the {interaction.user} who invoked me...")
+
+#     await interaction.response.send_message(f"New poll here (WIP)")
 
 
 client.run(TOKEN)
