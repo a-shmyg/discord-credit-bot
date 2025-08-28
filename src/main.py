@@ -7,8 +7,7 @@ from dotenv import load_dotenv
 from sqlalchemy import Column, Date, Integer, String, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-
-# from models import User
+from dao.models import User, Base
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -36,40 +35,11 @@ client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 tree.copy_global_to(guild=GUILD)
 
-
-# DB stuff - move out of this file when refactoring
-Base = declarative_base()
-
-
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True)  # TODO - change to UUID
-    username = Column(String)
-    feedback_credits = Column(Integer)
-    submitted_stories_total = Column(Integer)
-    read_stories_total = Column(Integer)
-    wordcount_read_total = Column(Integer)
-
-    def __repr__(self):
-        return "<User(username='{}', feedback_credits='{}', submitted_stories_total='{}', read_stories_total={}, wordcount_read_total={}>".format(
-            self.username,
-            self.feedback_credits,
-            self.submitted_stories_total,
-            self.read_stories_total,
-            self.wordcount_read_total
-        )
-
-
+# DB stuff - TODO to also move this out of here later
 def get_connection():
     return create_engine(
         url=f"postgresql://{DB_USER}:{DB_PASS}@localhost:5432/{DB_NAME}"
     )
-
-
-def create_tables():
-    print("Creating tables if they don't exist...")
-
 
 try:
     print("Connecting to DB via SQLAlchemy")
@@ -104,7 +74,6 @@ async def on_ready():
         if not result:
             print("User doesn't exist in DB, creating...")
 
-            # we're missing total wordcount but eh leave it for now
             user = User(
                 username=member_username,
                 feedback_credits=0,
@@ -118,10 +87,9 @@ async def on_ready():
         else:
             print("User exists in DB, skipping")
 
-    result = s.query(User).all()
-    print(str(result))
     s.close()
 
+    # Sync up the slash commands
     await tree.sync(guild=GUILD)
 
     print(f"We have logged in as {client.user} to {guild}")
