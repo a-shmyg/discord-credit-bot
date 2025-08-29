@@ -1,3 +1,4 @@
+import datetime
 import os
 
 import discord
@@ -9,8 +10,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 from dao.models import Base, Story, User, WhoReadWhat
-from util import (extract_embed_details, init_story_info, init_user_info,
-                  is_google_link)
+from util import (extract_embed_details, get_future_dates, init_story_info,
+                  init_user_info, is_google_link)
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -279,7 +280,7 @@ async def stats_submitted(interaction):
         format_message = f"{interaction.user.mention} has not submitted any stories yet!"
     else:
         for story in stories_submitted_result:
-            format_message += f"- {story.title}\n"
+            format_message += f"- {story.title} by {story.author_username} \n"
 
     db_session.close()
 
@@ -302,14 +303,21 @@ async def test_document(interaction):
     )
 
 
-# # TODO still because making polls is such a PITA every time
-# @tree.command(
-#     name="session", description="Create poll for new writing session", guild=GUILD
-# )
-# async def credits(interaction):
-#     print(f"Creating poll for the {interaction.user} who invoked me...")
+@tree.command(name="organize", description="Create poll for new writing session", guild=GUILD)
+async def credits(interaction):
+    print(f"Creating poll for the {interaction.user} who invoked me...")
 
-#     await interaction.response.send_message(f"New poll here (WIP)")
+    # TODO - rather than hardcoding, consider adding as an argument to the slash command and leave 10 as the default
+    future_dates = get_future_dates(10)
+
+    # Create the poll object, fill it out with our dates we get from function above, and be happy
+    dates_poll = discord.Poll(
+        question="When should we write next (now automated via /organize 😉)?", duration=datetime.timedelta(weeks=1)
+    )
+    for date in future_dates:
+        dates_poll.add_answer(text=f"{date}")
+
+    await interaction.response.send_message(poll=dates_poll)
 
 
 client.run(TOKEN)
