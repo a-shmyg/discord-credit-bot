@@ -32,12 +32,10 @@ class Story(Base):
     date_posted = Column(Time)
 
     def __repr__(self):
-        return (
-            "<Story(author_username='{}', story_message='{}', date_posted='{}'>".format(
-                self.author_username,
-                self.story_message,
-                self.date_posted,
-            )
+        return "<Story(author_username='{}', story_message='{}', date_posted='{}'>".format(
+            self.author_username,
+            self.story_message,
+            self.date_posted,
         )
 
 
@@ -46,8 +44,16 @@ class WhoReadWhat(Base):
     __tablename__ = "who_read_what"
 
     # Read up on composite primary keys -> this is basically what this is, it's more efficient
-    username = Column(String, ForeignKey(User.username), primary_key=True)
-    story_id = Column(Integer, ForeignKey(Story.id), primary_key=True)
+    username = Column(
+        String,
+        ForeignKey(User.username),
+        primary_key=True,
+    )
+    story_id = Column(
+        Integer,
+        ForeignKey(Story.id),
+        primary_key=True,
+    )
 
     def __repr__(self):
         return "<Story(username='{}', story_id='{}'>".format(

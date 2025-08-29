@@ -9,7 +9,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 from dao.models import Base, Story, User, WhoReadWhat
-from util import is_google_link, extract_embed_details, init_user_info, init_story_info
+from util import (extract_embed_details, init_story_info, init_user_info,
+                  is_google_link)
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -42,9 +43,8 @@ tree.copy_global_to(guild=GUILD)
 
 # DB stuff - TODO to also move this out of here later
 def get_connection():
-    return create_engine(
-        url=f"postgresql://{DB_USER}:{DB_PASS}@localhost:5432/{DB_NAME}"
-    )
+    return create_engine(url=f"postgresql://{DB_USER}:{DB_PASS}@localhost:5432/{DB_NAME}")
+
 
 try:
     print("Connecting to DB via SQLAlchemy")
@@ -109,6 +109,7 @@ async def on_message(message):
 
         s.close()
 
+
 # TODO - check for if someone's already read same story
 # ALSO - check for if someone's trying to get feedback credits from their own story, lol
 @client.event
@@ -116,9 +117,6 @@ async def on_raw_reaction_add(payload):
     guild = client.get_guild(GUILD_ID)
     channel = client.get_channel(CHANNEL)
     channel_of_react = payload.channel_id
-
-    # Session for our DB interactions
-    s = Session()
 
     # Limiting this event to only single channel - ignore reactions from elsewhere for now
     if channel_of_react != CHANNEL:
@@ -128,72 +126,60 @@ async def on_raw_reaction_add(payload):
     user_reacted_with = payload.emoji.name
     message_id = payload.message_id
 
-    # Fetch the actual message that got reacted to - naive solution for now, just looping over last 500 messages in channel
-    channel_messages = channel.history(limit=500)
+    # Fetch the actual message content which was reacted to, because the payload contains only the ID
+    message = await channel.fetch_message(payload.message_id)
 
-    async for message in channel_messages:
-        if (message.id == message_id and user_reacted_with == CREDIT_REACT and is_google_link(message.content)):
-            print(f"{user_who_reacted} reacted to message. Content: {message.content}. React emoji: {user_reacted_with}")
+    if is_google_link(message.content) and user_reacted_with == CREDIT_REACT:
+        db_session = Session()
+        story_details = extract_embed_details(message)
 
-            story_details = extract_embed_details(message)
-            story_title = story_details["title"]
-            story_wordcount = story_details["wordcount"]
+        # Update the junction table - first check it doesn't exist (TODO - check ON_CONFLICT behaviour for sqlalchemy)
+        print(f"Updating who read what table...")
+        story_result = db_session.query(Story).filter_by(story_message=str(message.content)).first()
 
-            # This bit tracks who read what - we're just updating in DB whenever somebody does :tick: emoji
-            # TODO move this out of here lol it's a mess RN
-            print("Updating junction table to track who read what...")
-
-            story_result = (
-                s.query(Story).filter_by(story_message=str(message.content)).first()
-            )
-
-            who_read_what_result = s.query(
-                exists().where(
-                    and_(
-                        WhoReadWhat.username == str(user_who_reacted.name),
-                        WhoReadWhat.story_id == story_result.id,
-                    )
+        who_read_what_result = db_session.query(
+            exists().where(
+                and_(
+                    WhoReadWhat.username == str(user_who_reacted.name),
+                    WhoReadWhat.story_id == story_result.id,
                 )
-            ).scalar()
-
-            if not who_read_what_result:
-                # What we're doing here - we need user id of who READ the story AKA author of the REACTION (not the message)
-                print("Who read what entry doesn't exist in DB, adding...")
-                who_read_story = WhoReadWhat(
-                    username=str(user_who_reacted.name),
-                    story_id=story_result.id,
-                )
-
-                s.add(who_read_story)
-                s.commit()
-            else:
-                print("Who read what already in DB, skipping")
-
-            # TODO - move this out into functions in dao folder
-            print(f"Updating credits for {user_who_reacted}...")
-            s.query(User).filter_by(username=str(user_who_reacted.name)).update(
-                {
-                    "feedback_credits": User.feedback_credits + 1,
-                    "read_stories_total": User.read_stories_total + 1,
-                    "wordcount_read_total": User.wordcount_read_total + story_wordcount,
-                }
             )
-            s.commit()
-            user_result = (
-                s.query(User).filter_by(username=str(user_who_reacted.name)).first()
-            )
-            s.close()
-            print(user_result)
+        ).scalar()
 
-            await channel.send(
-                f"{user_who_reacted.mention} has read **{story_title}** by {message.author.nick} and gets a feedback credit :coin:!"
+        if not who_read_what_result:
+            print("Who read what entry doesn't exist in DB, adding...")
+            who_read_story = WhoReadWhat(
+                username=str(user_who_reacted.name),
+                story_id=story_result.id,
             )
 
-            return
+            db_session.add(who_read_story)
+            db_session.commit()
+        else:
+            print("Who read what already in DB, skipping")
 
+        # Update credit info for the user who read the story
+        print(f"Updating credits for {user_who_reacted}...")
+        db_session.query(User).filter_by(username=str(user_who_reacted.name)).update(
+            {
+                "feedback_credits": User.feedback_credits + 1,
+                "read_stories_total": User.read_stories_total + 1,
+                "wordcount_read_total": User.wordcount_read_total + story_details["wordcount"],
+            }
+        )
+        db_session.commit()
+        db_session.close()
+
+        await channel.send(
+            f"{user_who_reacted.mention} has read **{story_details["title"]}** by {message.author.nick} and gets a feedback credit :coin:!"
+        )
 
 # Would be nicer as a hidden message or a DM to not clog up channel
-@tree.command(name="credits", description="Get number of feedback credits", guild=GUILD)
+@tree.command(
+    name="credits",
+    description="Get number of feedback credits",
+    guild=GUILD,
+)
 async def credits(interaction):
     print(f"Getting credit info for the {interaction.user} who invoked me...")
 
@@ -208,7 +194,9 @@ async def credits(interaction):
 
 
 @tree.command(
-    name="stats", description="Get user stats for posted stories", guild=GUILD
+    name="stats",
+    description="Get user stats for posted stories",
+    guild=GUILD,
 )
 async def stats(interaction):
     print(f"Getting stats for the {interaction.user} who invoked me...")

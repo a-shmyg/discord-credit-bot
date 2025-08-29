@@ -1,23 +1,27 @@
 import re
-from dao.models import User, Story, WhoReadWhat
-from sqlalchemy import exists, and_
+
+from sqlalchemy import and_, exists
+
+from dao.models import Story, User, WhoReadWhat
 
 GOOGLE_DOC_URL = "https://docs.google.com"
 CREDIT_REACT = "✅"
 
+
 # Super basic - we should switch to 'contains' instead in case anybody posts something before the link
-def is_google_link(message_content):    
+def is_google_link(message_content):
     if message_content.startswith(GOOGLE_DOC_URL):
         return True
     else:
         return False
 
+
 # Quite fragile with many assumptions, but a decent start for the refactor
 def extract_embed_details(message):
     print("Attempting to extract title and wordcount from story message...")
     story_details = {
-        "title" : "an awesome story",
-        "wordcount" : 0
+        "title": "an awesome story",
+        "wordcount": 0,
     }
 
     if len(message.embeds) > 0:
@@ -27,8 +31,8 @@ def extract_embed_details(message):
         if len(wordcount) > 0:
             story_details["wordcount"] = int(wordcount[0])
 
-    
     return story_details
+
 
 # DB stuff, mostly for testing
 # Probably not great to pass around DB session like this, but eh
@@ -55,6 +59,7 @@ def init_user_info(guild_members, db_session):
         else:
             print("User exists in DB, skipping")
 
+
 async def init_story_info(channel_messages, db_session):
     print("Initialising submitted story info...")
 
@@ -62,9 +67,7 @@ async def init_story_info(channel_messages, db_session):
         # Populate DB with posted stories
 
         if is_google_link(message.content):
-            story_result = (
-                db_session.query(Story).filter_by(story_message=str(message.content)).first()
-            )
+            story_result = db_session.query(Story).filter_by(story_message=str(message.content)).first()
 
             # Only add if story doesn't exist in DB already
             if not story_result:
@@ -86,9 +89,7 @@ async def init_story_info(channel_messages, db_session):
 
             # Super jank, I'm sure there's a nicer way - need more reading about async stuff.
             # Doing it twice for now but I don't think we need to query again. Ceases to be an issue once we move this DB population out of on_ready logic
-            story_result = (
-                db_session.query(Story).filter_by(story_message=str(message.content)).first()
-            )
+            story_result = db_session.query(Story).filter_by(story_message=str(message.content)).first()
 
             for reaction in reactions:
                 if reaction.emoji == CREDIT_REACT:
@@ -114,4 +115,4 @@ async def init_story_info(channel_messages, db_session):
                             db_session.add(who_read_story)
                             db_session.commit()
                         else:
-                            print("Who read what already in DB, skipping")        
+                            print("Who read what already in DB, skipping")
