@@ -156,7 +156,9 @@ async def on_raw_reaction_add(payload):
             db_session.add(who_read_story)
             db_session.commit()
         else:
-            print("Who read what already in DB, skipping")
+            # This is simple way to make sure someone doesn't spam react :tick: -> remove -> react :tick: for infinite credit
+            print(f"{user_who_reacted.name} already read {story_details["title"]}, skipping ()")
+            return
 
         # Update credit info for the user who read the story
         print(f"Updating credits for {user_who_reacted}...")
@@ -173,6 +175,7 @@ async def on_raw_reaction_add(payload):
         await channel.send(
             f"{user_who_reacted.mention} has read **{story_details["title"]}** by {message.author.nick} and gets a feedback credit :coin:!"
         )
+
 
 # Would be nicer as a hidden message or a DM to not clog up channel
 @tree.command(
