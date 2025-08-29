@@ -92,6 +92,7 @@ async def on_message(message):
     # Super basic check, for now assuming if person posts a doc link in the channel, they're posting a story
     if is_google_link(message.content):
         print(f"{message.author} posted a new story")
+        story_details = extract_embed_details(message)
 
         s = Session()
 
@@ -106,8 +107,11 @@ async def on_message(message):
             )
             s.add(story)
             s.commit()
-
         s.close()
+
+        await channel.send(
+            f":books: {message.author.mention} has posted **{story_details["title"]}**!"
+        )
 
 @client.event
 async def on_raw_reaction_add(payload):
@@ -127,13 +131,14 @@ async def on_raw_reaction_add(payload):
     message = await channel.fetch_message(payload.message_id)
 
     if is_google_link(message.content) and user_reacted_with == CREDIT_REACT:
-        db_session = Session()
         story_details = extract_embed_details(message)
 
         # Super simple check to make sure people don't get credits for reading their own story lol
         if str(user_who_reacted.name) == str(message.author):
             print(f"{user_who_reacted} is author of {story_details["title"]}, skipping")
             return
+
+        db_session = Session()
 
         # Update the junction table - first check it doesn't exist (TODO - check ON_CONFLICT behaviour for sqlalchemy)
         print(f"Updating who read what table...")
@@ -223,6 +228,19 @@ async def stats(interaction):
     """
 
     await interaction.response.send_message(format_message)
+
+
+# @tree.command(
+#     name="test_document",
+#     description="Make post a test story link in channel",
+#     guild=GUILD,
+# )
+# async def test_document(interaction):
+#     print(f"Sending test document on behalf of {interaction.user} who invoked me...")
+
+#     channel = client.get_channel(CHANNEL)
+
+#     await interaction.response.send_message("https://docs.google.com/document/d/1ZZ81lo1rQf8NX9xnlhCH3ihTONJdRASn00s1a5mdvp4/edit?usp=sharing")
 
 # FOR TESTING ONLY -> to be removed
 @tree.command(
