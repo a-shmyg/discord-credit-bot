@@ -103,6 +103,7 @@ async def on_message(message):
             story = Story(
                 author_username=str(message.author),
                 story_message=str(message.content),
+                title=str(story_details["title"]),
                 date_posted=str(message.created_at),
             )
             s.add(story)
@@ -229,18 +230,35 @@ async def stats(interaction):
 
     await interaction.response.send_message(format_message)
 
+# TODO - look into arguments for slash commands - it makes sense for all 'stats' type stuff to be under /stats
+@tree.command(
+    name="stats_read",
+    description="Get a list of all stories user has read",
+    guild=GUILD,
+)
+async def stats_read(interaction):
+    print(f"Fetching list of stories read by {interaction.user} who invoked me...")
+    channel = client.get_channel(CHANNEL)
+    format_message = f"{interaction.user.mention} has read:\n"
 
-# @tree.command(
-#     name="test_document",
-#     description="Make post a test story link in channel",
-#     guild=GUILD,
-# )
-# async def test_document(interaction):
-#     print(f"Sending test document on behalf of {interaction.user} who invoked me...")
+    db_session = Session()
 
-#     channel = client.get_channel(CHANNEL)
+    stories_read_result = (
+        db_session.query(WhoReadWhat, Story.title)
+        .join(Story, WhoReadWhat.story_id == Story.id)
+        .filter(WhoReadWhat.username == str(interaction.user))
+        .all()
+    )
 
-#     await interaction.response.send_message("https://docs.google.com/document/d/1ZZ81lo1rQf8NX9xnlhCH3ihTONJdRASn00s1a5mdvp4/edit?usp=sharing")
+    # TODO - do some more reading on how to get back what you want - ATM it's just a tuple, so I need to hardcode index of the message
+    # This makes it quite fragile (if query changes, and so does index of story link), also not great for code clarity (because story[1] is super arbitrary)
+    for story in stories_read_result:
+        format_message += f"{story[1]}\n"
+
+    db_session.close()
+
+    await interaction.response.send_message(format_message)
+
 
 # FOR TESTING ONLY -> to be removed
 @tree.command(
@@ -253,7 +271,7 @@ async def test_document(interaction):
 
     channel = client.get_channel(CHANNEL)
 
-    await interaction.response.send_message("https://docs.google.com/document/d/1ZZ81lo1rQf8NX9xnlhCH3ihTONJdRASn00s1a5mdvp4/edit?usp=sharing")
+    await interaction.response.send_message("https://docs.google.com/document/d/14JCF6JC0km8ywBU_oWV5P5Za76QF7j0Bqc-iPGBPBDM/edit?usp=sharing")
 
 # # TODO still because making polls is such a PITA every time
 # @tree.command(

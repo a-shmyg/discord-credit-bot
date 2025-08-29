@@ -21,7 +21,7 @@ class User(Base):
             self.wordcount_read_total,
         )
 
-
+# TODO - add a title column 
 class Story(Base):
     __tablename__ = "stories"
 
@@ -29,12 +29,14 @@ class Story(Base):
     id = Column(Integer, primary_key=True)  # TODO - change to UUID
     author_username = Column(String)
     story_message = Column(String)
+    title = Column(String)
     date_posted = Column(Time)
 
     def __repr__(self):
-        return "<Story(author_username='{}', story_message='{}', date_posted='{}'>".format(
+        return "<Story(author_username='{}', story_message='{}', title='{}', date_posted='{}'>".format(
             self.author_username,
             self.story_message,
+            self.title,
             self.date_posted,
         )
 

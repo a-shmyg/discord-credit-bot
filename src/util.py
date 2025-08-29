@@ -72,10 +72,12 @@ async def init_story_info(channel_messages, db_session):
             # Only add if story doesn't exist in DB already
             if not story_result:
                 print("Story link/message doesn't exist in DB, adding...")
+                story_details = extract_embed_details(message)
 
                 story = Story(
                     author_username=str(message.author),
                     story_message=str(message.content),
+                    title=str(story_details["title"]),
                     date_posted=str(message.created_at),
                 )
                 db_session.add(story)
