@@ -109,9 +109,6 @@ async def on_message(message):
 
         s.close()
 
-
-# TODO - check for if someone's already read same story
-# ALSO - check for if someone's trying to get feedback credits from their own story, lol
 @client.event
 async def on_raw_reaction_add(payload):
     guild = client.get_guild(GUILD_ID)
@@ -132,6 +129,11 @@ async def on_raw_reaction_add(payload):
     if is_google_link(message.content) and user_reacted_with == CREDIT_REACT:
         db_session = Session()
         story_details = extract_embed_details(message)
+
+        # Super simple check to make sure people don't get credits for reading their own story lol
+        if str(user_who_reacted.name) == str(message.author):
+            print(f"{user_who_reacted} is author of {story_details["title"]}, skipping")
+            return
 
         # Update the junction table - first check it doesn't exist (TODO - check ON_CONFLICT behaviour for sqlalchemy)
         print(f"Updating who read what table...")
@@ -157,7 +159,8 @@ async def on_raw_reaction_add(payload):
             db_session.commit()
         else:
             # This is simple way to make sure someone doesn't spam react :tick: -> remove -> react :tick: for infinite credit
-            print(f"{user_who_reacted.name} already read {story_details["title"]}, skipping ()")
+            print(f"{user_who_reacted.name} already read {story_details["title"]}, skipping")
+            db_session.close()
             return
 
         # Update credit info for the user who read the story
@@ -221,6 +224,18 @@ async def stats(interaction):
 
     await interaction.response.send_message(format_message)
 
+# FOR TESTING ONLY -> to be removed
+@tree.command(
+    name="test_document",
+    description="Make post a test story link in channel",
+    guild=GUILD,
+)
+async def test_document(interaction):
+    print(f"Sending test document on behalf of {interaction.user} who invoked me...")
+
+    channel = client.get_channel(CHANNEL)
+
+    await interaction.response.send_message("https://docs.google.com/document/d/1ZZ81lo1rQf8NX9xnlhCH3ihTONJdRASn00s1a5mdvp4/edit?usp=sharing")
 
 # # TODO still because making polls is such a PITA every time
 # @tree.command(
