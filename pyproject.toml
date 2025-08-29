@@ -17,8 +17,10 @@ dependencies = [
 ]
 
 [tool.poetry]
-packages = [{include = "discord_credit_bot", from = "src"}]
+package-mode = false
 
+[tool.black]
+line-length = 120
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
