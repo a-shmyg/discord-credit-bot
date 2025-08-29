@@ -21,7 +21,8 @@ class User(Base):
             self.wordcount_read_total,
         )
 
-# TODO - add a title column 
+
+# TODO - add a title column
 class Story(Base):
     __tablename__ = "stories"
 

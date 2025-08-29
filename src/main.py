@@ -110,9 +110,8 @@ async def on_message(message):
             s.commit()
         s.close()
 
-        await channel.send(
-            f":books: {message.author.mention} has posted **{story_details["title"]}**!"
-        )
+        await channel.send(f":books: {message.author.mention} has posted **{story_details["title"]}**!")
+
 
 @client.event
 async def on_raw_reaction_add(payload):
@@ -230,6 +229,7 @@ async def stats(interaction):
 
     await interaction.response.send_message(format_message)
 
+
 # TODO - look into arguments for slash commands - it makes sense for all 'stats' type stuff to be under /stats
 @tree.command(
     name="stats_read",
@@ -239,7 +239,7 @@ async def stats(interaction):
 async def stats_read(interaction):
     print(f"Fetching list of stories read by {interaction.user} who invoked me...")
     channel = client.get_channel(CHANNEL)
-    format_message = f"{interaction.user.mention} has read:\n"
+    format_message = f"**{interaction.user.mention} has read:**\n"
 
     db_session = Session()
 
@@ -252,8 +252,34 @@ async def stats_read(interaction):
 
     # TODO - do some more reading on how to get back what you want - ATM it's just a tuple, so I need to hardcode index of the message
     # This makes it quite fragile (if query changes, and so does index of story link), also not great for code clarity (because story[1] is super arbitrary)
+    # Also, add a limit here... like 10 most recent stories or so, otherwise we might hit discord char limit in the message
     for story in stories_read_result:
-        format_message += f"{story[1]}\n"
+        format_message += f"- {story[1]}\n"
+
+    db_session.close()
+
+    await interaction.response.send_message(format_message)
+
+
+@tree.command(
+    name="stats_submitted",
+    description="Get a list of all stories user has submitted",
+    guild=GUILD,
+)
+async def stats_submitted(interaction):
+    print(f"Fetching list of stories submitted by {interaction.user} who invoked me...")
+    channel = client.get_channel(CHANNEL)
+    format_message = f"**{interaction.user.mention} has submitted:**\n"
+
+    db_session = Session()
+
+    stories_submitted_result = db_session.query(Story).filter_by(author_username=str(interaction.user.name)).all()
+
+    if not stories_submitted_result:
+        format_message = f"{interaction.user.mention} has not submitted any stories yet!"
+    else:
+        for story in stories_submitted_result:
+            format_message += f"- {story.title}\n"
 
     db_session.close()
 
@@ -271,7 +297,10 @@ async def test_document(interaction):
 
     channel = client.get_channel(CHANNEL)
 
-    await interaction.response.send_message("https://docs.google.com/document/d/14JCF6JC0km8ywBU_oWV5P5Za76QF7j0Bqc-iPGBPBDM/edit?usp=sharing")
+    await interaction.response.send_message(
+        "https://docs.google.com/document/d/1Ldx0Ap982-Bi3tnMJdXj5jSotWylfOSnQuHOOTVLnk4/edit?usp=sharing"
+    )
+
 
 # # TODO still because making polls is such a PITA every time
 # @tree.command(
