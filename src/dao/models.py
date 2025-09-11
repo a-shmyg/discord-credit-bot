@@ -30,17 +30,18 @@ class Story(Base):
     id = Column(Integer, primary_key=True)  # TODO - change to UUID
     author_username = Column(String)
     story_message = Column(String)
+    story_message_id = Column(String)
     title = Column(String)
     date_posted = Column(Time)
 
     def __repr__(self):
-        return "<Story(author_username='{}', story_message='{}', title='{}', date_posted='{}'>".format(
+        return "<Story(author_username='{}', story_message='{}', story_message_id='{}' title='{}', date_posted='{}'>".format(
             self.author_username,
-            self.story_message,
+            self.story_message, #or just use filename for message content for now lol, KISS
+            self.story_message_id,
             self.title,
             self.date_posted,
         )
-
 
 # Terrible table name but whatever, this is for fun
 class WhoReadWhat(Base):

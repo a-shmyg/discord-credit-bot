@@ -1,5 +1,6 @@
 import datetime
 import os
+import typing
 
 import discord
 from discord import app_commands
@@ -10,13 +11,14 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 from dao.models import Base, Story, User, WhoReadWhat
-from util import (extract_embed_details, get_future_dates, init_story_info,
-                  init_user_info, is_google_link)
+from util import (extract_embed_details, extract_file_details, get_future_dates, init_story_info,
+                  init_user_info, is_google_link, is_text_file)
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 GUILD_ID = int(os.getenv("DISCORD_GUILD_ID"))
-CHANNEL = int(os.getenv("DISCORD_TEST_CHANNEL_ID"))
+CHANNEL = int(os.getenv("DISCORD_BOT_ANNOUNCE_CHANNEL_ID")) #revert later
+DOC_CHANNEL = int(os.getenv("DISCORD_DOC_CHANNEL_ID"))
 CREDIT_REACT = "✅"
 
 
@@ -24,7 +26,7 @@ CREDIT_REACT = "✅"
 DB_USER = os.getenv("POSTGRES_USER")
 DB_PASS = os.getenv("POSTGRES_PASSWORD")
 DB_NAME = os.getenv("POSTGRES_DB")
-
+DB_HOST = os.getenv("POSTGRES_HOST")
 
 # Following the slash command example here - https://github.com/Rapptz/discord.py/blob/master/examples/app_commands/basic.py
 GUILD = discord.Object(GUILD_ID)
@@ -44,7 +46,7 @@ tree.copy_global_to(guild=GUILD)
 
 # DB stuff - TODO to also move this out of here later
 def get_connection():
-    return create_engine(url=f"postgresql://{DB_USER}:{DB_PASS}@localhost:5432/{DB_NAME}")
+    return create_engine(url=f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:5432/{DB_NAME}")
 
 
 try:
@@ -63,7 +65,7 @@ Session = sessionmaker(bind=engine)
 @client.event
 async def on_ready():
     guild = client.get_guild(GUILD_ID)
-    channel = client.get_channel(CHANNEL)
+    channel = client.get_channel(DOC_CHANNEL)
     channel_messages = channel.history()
 
     s = Session()
@@ -83,16 +85,19 @@ async def on_ready():
 @client.event
 async def on_message(message):
     guild = client.get_guild(GUILD_ID)
-    channel = client.get_channel(CHANNEL)
+    announce_channel = client.get_channel(CHANNEL)
+    doc_channel = client.get_channel(DOC_CHANNEL)
     channel_of_message = message.channel
 
     # Limiting this event to only single channel - ignore messages from elsewhere for now. Probs nicer way to do this, one to look into
-    if channel_of_message != channel:
+    if channel_of_message != doc_channel:
         return
 
     # Super basic check, for now assuming if person posts a doc link in the channel, they're posting a story
     if is_google_link(message.content):
-        print(f"{message.author} posted a new story")
+        print(f"{message.author} posted a new story google document")
+
+        # I think there's a race condition here - if message embed renders too slowly, the message with no embeds is passed so it uses the fallback
         story_details = extract_embed_details(message)
 
         s = Session()
@@ -104,6 +109,30 @@ async def on_message(message):
             story = Story(
                 author_username=str(message.author),
                 story_message=str(message.content),
+                story_message_id=str(message.id),
+                title=str(story_details["title"]),
+                date_posted=str(message.created_at),
+            )
+            s.add(story)
+            s.commit()
+
+        s.close()
+        await announce_channel.send(f":books: {message.author.mention} has posted **{story_details["title"]}**!")
+
+    if is_text_file(message):
+        print(f"{message.author} posted a new story file")
+
+        story_details = extract_file_details(message)
+
+        s = Session()
+
+        result = s.query(Story).filter_by(story_message=str(story_details["title"])).first()
+        if not result:
+            print("Story file/message doesn't exist in DB, adding...")
+            story = Story(
+                author_username=str(message.author),
+                story_message=str(story_details["title"]), # TODO - hacky solution for now, but if someone just uploads a file the contents will be empty which will break things
+                story_message_id=str(message.id),
                 title=str(story_details["title"]),
                 date_posted=str(message.created_at),
             )
@@ -111,17 +140,20 @@ async def on_message(message):
             s.commit()
         s.close()
 
-        await channel.send(f":books: {message.author.mention} has posted **{story_details["title"]}**!")
+        await announce_channel.send(f":books: {message.author.mention} has posted **{story_details["title"]}**!")
 
 
 @client.event
 async def on_raw_reaction_add(payload):
     guild = client.get_guild(GUILD_ID)
-    channel = client.get_channel(CHANNEL)
+
+    announce_channel = client.get_channel(CHANNEL)
+    doc_channel = client.get_channel(DOC_CHANNEL)
+
     channel_of_react = payload.channel_id
 
     # Limiting this event to only single channel - ignore reactions from elsewhere for now
-    if channel_of_react != CHANNEL:
+    if channel_of_react != DOC_CHANNEL:
         return
 
     user_who_reacted = guild.get_member(payload.user_id)
@@ -129,10 +161,16 @@ async def on_raw_reaction_add(payload):
     message_id = payload.message_id
 
     # Fetch the actual message content which was reacted to, because the payload contains only the ID
-    message = await channel.fetch_message(payload.message_id)
+    message = await doc_channel.fetch_message(payload.message_id)
 
-    if is_google_link(message.content) and user_reacted_with == CREDIT_REACT:
-        story_details = extract_embed_details(message)
+    if (is_google_link(message.content) or is_text_file(message)) and user_reacted_with == CREDIT_REACT:
+        if is_google_link(message.content):
+            story_details = extract_embed_details(message)
+        elif is_text_file(message):
+            story_details = extract_file_details(message)
+        else:
+            print("Something went wrong, returning")
+            return
 
         # Super simple check to make sure people don't get credits for reading their own story lol
         if str(user_who_reacted.name) == str(message.author):
@@ -142,8 +180,16 @@ async def on_raw_reaction_add(payload):
         db_session = Session()
 
         # Update the junction table - first check it doesn't exist (TODO - check ON_CONFLICT behaviour for sqlalchemy)
+        # Also stop using message.content, use message.id instead or it breaks the file stuff
         print(f"Updating who read what table...")
-        story_result = db_session.query(Story).filter_by(story_message=str(message.content)).first()
+
+        if is_google_link(message.content):
+            story_result = db_session.query(Story).filter_by(story_message=str(message.content)).first()
+        elif is_text_file(message):
+            story_result = db_session.query(Story).filter_by(story_message=str(story_details["title"])).first()
+        else:
+            print("Something went wrong, returning")
+            return
 
         who_read_what_result = db_session.query(
             exists().where(
@@ -181,9 +227,10 @@ async def on_raw_reaction_add(payload):
         db_session.commit()
         db_session.close()
 
-        await channel.send(
+        await announce_channel.send(
             f"{user_who_reacted.mention} has read **{story_details["title"]}** by {message.author.nick} and gets a feedback credit :coin:!"
         )
+
 
 
 # Would be nicer as a hidden message or a DM to not clog up channel
@@ -312,12 +359,16 @@ async def credits(interaction):
 
     # Create the poll object, fill it out with our dates we get from function above, and be happy
     dates_poll = discord.Poll(
-        question="When should we write next (now automated via /organize 😉)?", duration=datetime.timedelta(weeks=1)
+        question="When should we write next (now automated via /organize 😉)?",
+        duration=datetime.timedelta(weeks=1),
+        multiple=True,
     )
+
     for date in future_dates:
         dates_poll.add_answer(text=f"{date}")
 
     await interaction.response.send_message(poll=dates_poll)
 
 
-client.run(TOKEN)
+if __name__ == "__main__":
+    client.run(TOKEN)

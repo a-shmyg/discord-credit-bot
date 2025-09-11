@@ -28,6 +28,32 @@ def is_google_link(message_content):
     else:
         return False
 
+# Again a little fragile as we're assuming only a single embed will be inside the message, but that's OK for now
+# Also some copied code - TODO clean this bit up once it works
+def is_text_file(message):    
+    if len(message.attachments) > 0:
+        return True
+    else:
+        return False
+
+# TODO - remove duplicated code
+def extract_file_details(message):
+    print("Attempting to extract title and wordcount from story file...")
+    story_details = {
+        "title": "an awesome story",
+        "wordcount": 0,
+    }
+
+    story_details["title"] = message.attachments[0].filename
+
+    wordcount = re.findall(r"\[(.*?)\]", story_details["title"])
+    if len(wordcount) > 0:
+        if wordcount[0].isdigit():
+            story_details["wordcount"] = int(wordcount[0])
+        else:
+            print("Did not extract a number from title")
+    
+    return story_details
 
 # Quite fragile with many assumptions, but a decent start for the refactor
 def extract_embed_details(message):
@@ -42,10 +68,12 @@ def extract_embed_details(message):
 
         wordcount = re.findall(r"\[(.*?)\]", story_details["title"])
         if len(wordcount) > 0:
-            story_details["wordcount"] = int(wordcount[0])
+            if wordcount[0].isdigit():
+                story_details["wordcount"] = int(wordcount[0])
+            else:
+                print("Did not extract a number from title")
 
     return story_details
-
 
 # DB stuff, mostly for testing
 # Probably not great to pass around DB session like this, but eh
@@ -76,8 +104,29 @@ def init_user_info(guild_members, db_session):
 async def init_story_info(channel_messages, db_session):
     print("Initialising submitted story info...")
 
+    # TODO - refactor, this is horrible 
     async for message in channel_messages:
         # Populate DB with posted stories
+        if is_text_file(message):
+            story_details = extract_file_details(message)
+            story_result = db_session.query(Story).filter_by(story_message=str(story_details["title"])).first()
+
+            if not story_result:
+                print(f"Story file by {message.author} doesn't exist in DB, adding...")
+
+                story = Story(
+                    author_username=str(message.author),
+                    story_message=str(story_details["title"]),
+                    story_message_id=str(message.id),
+                    title=str(story_details["title"]),
+                    date_posted=str(message.created_at),
+                )
+
+                db_session.add(story)
+                db_session.commit()
+            else:
+                print("Story file exists in DB, skipping")
+
 
         if is_google_link(message.content):
             story_result = db_session.query(Story).filter_by(story_message=str(message.content)).first()
@@ -90,6 +139,7 @@ async def init_story_info(channel_messages, db_session):
                 story = Story(
                     author_username=str(message.author),
                     story_message=str(message.content),
+                    story_message_id=str(message.id),
                     title=str(story_details["title"]),
                     date_posted=str(message.created_at),
                 )

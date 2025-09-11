@@ -10,3 +10,5 @@ lint:
 
 test:
 	poetry run python tests/test_function.py
+
+	
